@@ -164,6 +164,29 @@ def test_resolve_secret_rejects_a_reference_with_no_command() -> None:
         resolve_secret("cmd://   ")
 
 
+def test_load_does_not_resolve_secrets(monkeypatch) -> None:
+    """A locked vault must not break commands that never need to log in."""
+
+    def explode(*args, **kwargs):
+        raise AssertionError("Settings.load must not shell out to a password manager")
+
+    monkeypatch.setattr(subprocess, "run", explode)
+    settings = Settings.load({"SKYLIGHT_PASSWORD": "lp://Skylight"})
+    assert settings.password == "lp://Skylight"
+
+
+def test_resolution_happens_on_demand(monkeypatch) -> None:
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout="the-secret\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    settings = Settings.load(
+        {"SKYLIGHT_EMAIL": "me@example.com", "SKYLIGHT_PASSWORD": "lp://Skylight"}
+    )
+    assert settings.resolved_password() == "the-secret"
+    assert settings.resolved_email() == "me@example.com"
+
+
 def test_token_cache_round_trips(tmp_path) -> None:
     cache = TokenCache(tmp_path / "token.json")
     assert cache.load() is None

@@ -138,3 +138,51 @@ def test_login_without_credentials_fails_cleanly(capsys, monkeypatch) -> None:
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
     assert cli.main(["login"]) == 1
     assert "op://" in capsys.readouterr().err
+
+
+def test_a_cached_token_survives_a_locked_password_manager(monkeypatch, tmp_path) -> None:
+    """The regression that motivated lazy resolution: a valid token, a locked vault."""
+    import subprocess
+
+    from skylight_cli.auth import Credentials
+    from skylight_cli.config import TokenCache, config_dir
+
+    config_dir().mkdir(parents=True, exist_ok=True)
+    (config_dir() / ".env").write_text("SKYLIGHT_EMAIL=me@example.com\nSKYLIGHT_PASSWORD=lp://X\n")
+
+    cache = TokenCache()
+    cache.save(Credentials("tok-123", expires_at=10**12))
+
+    def explode(*args, **kwargs):
+        raise AssertionError("must not consult the password manager with a valid token")
+
+    monkeypatch.setattr(subprocess, "run", explode)
+
+    captured = {}
+
+    def fake_frames(self):
+        captured["called"] = True
+        return [{"id": "77", "name": "Kitchen", "timezone": "America/New_York"}]
+
+    monkeypatch.setattr("skylight_cli.client.SkylightClient.frames", fake_frames)
+    assert cli.main(["frames"]) == 0
+    assert captured["called"] is True
+
+
+def test_a_failing_password_manager_is_reported_cleanly(capsys, monkeypatch) -> None:
+    """It must print `error: ...`, not dump a traceback."""
+    import subprocess
+
+    from skylight_cli.config import config_dir
+
+    config_dir().mkdir(parents=True, exist_ok=True)
+    (config_dir() / ".env").write_text("SKYLIGHT_EMAIL=me@example.com\nSKYLIGHT_PASSWORD=lp://X\n")
+
+    def fake_run(command, **kwargs):
+        raise subprocess.CalledProcessError(1, command, stderr="Could not find decryption key.")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert cli.main(["login"]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: ")
+    assert "decryption key" in err

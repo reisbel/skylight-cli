@@ -110,7 +110,14 @@ def resolve_secret(value: str | None) -> str | None:
 
 @dataclass
 class Settings:
-    """Everything the CLI needs to reach a specific Skylight household."""
+    """Everything the CLI needs to reach a specific Skylight household.
+
+    ``email`` and ``password`` are held exactly as configured, which means they
+    may still be unresolved ``op://`` or ``lp://`` references. Resolving them
+    costs a subprocess and needs the vault unlocked, so it happens only when a
+    login is actually required: a cached token must keep working while the
+    password manager is locked.
+    """
 
     email: str | None = None
     password: str | None = None
@@ -123,10 +130,18 @@ class Settings:
             source.update(load_dotenv(path))
         source.update(env if env is not None else os.environ)
         return cls(
-            email=resolve_secret(source.get("SKYLIGHT_EMAIL") or None),
-            password=resolve_secret(source.get("SKYLIGHT_PASSWORD") or None),
+            email=source.get("SKYLIGHT_EMAIL") or None,
+            password=source.get("SKYLIGHT_PASSWORD") or None,
             frame_id=source.get("SKYLIGHT_FRAME_ID") or None,
         )
+
+    def resolved_email(self) -> str | None:
+        """The email, with any secret reference resolved."""
+        return resolve_secret(self.email)
+
+    def resolved_password(self) -> str | None:
+        """The password, with any secret reference resolved."""
+        return resolve_secret(self.password)
 
 
 def default_cache_path() -> Path:

@@ -64,8 +64,8 @@ def open_session(cache: TokenCache, settings: Settings, *, interactive: bool) ->
 
 def do_login(cache: TokenCache, settings: Settings, *, interactive: bool) -> Any:
     """Log in from the configured credentials, prompting only when attached to a terminal."""
-    email = settings.email
-    password = settings.password
+    email = settings.resolved_email()
+    password = settings.resolved_password()
 
     if not email:
         if not interactive:
@@ -353,10 +353,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    cache = TokenCache()
-    settings = Settings.load()
 
     try:
+        cache = TokenCache()
+        settings = Settings.load()
         if args.func in (cmd_login, cmd_logout):
             return args.func(args, cache, settings)
         with open_session(cache, settings, interactive=sys.stdin.isatty()) as client:
