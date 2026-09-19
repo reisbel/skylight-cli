@@ -52,13 +52,31 @@ uv venv && uv pip install -e ".[dev]"
 skylight login
 ```
 
-You are prompted for your Skylight email and password.
+In a real terminal that prompts for your Skylight email and password.
 They are used once, to complete the same OAuth2 login the Skylight app performs, and are never written to disk.
 The resulting bearer token is cached at `~/.cache/skylight-cli/token.json` with mode `0600` and refreshed automatically as it expires.
 
-To avoid the prompt in a script, set `SKYLIGHT_EMAIL` and `SKYLIGHT_PASSWORD`, or copy `.env.example` to `.env`.
-`.env` is gitignored.
-Prefer running `skylight login` by hand once and letting the cached token carry the rest.
+### Without a terminal
+
+Scripts, editors and coding agents often have no TTY at all, so there is nothing to prompt on.
+Put the credentials in `~/.config/skylight-cli/.env` instead:
+
+```ini
+SKYLIGHT_EMAIL=you@example.com
+SKYLIGHT_PASSWORD=your-password
+```
+
+Better, keep the password in 1Password and reference it.
+Any value may be an `op://` reference, resolved at run time through the 1Password CLI, so the secret is never written to disk or left in your shell history:
+
+```ini
+SKYLIGHT_EMAIL=you@example.com
+SKYLIGHT_PASSWORD=op://Personal/Skylight/password
+```
+
+Config is read from `~/.config/skylight-cli/.env` first, then a `.env` in the working directory, then real environment variables, each overriding the last.
+The per-user file is the one to use for a globally installed `skylight`, since it does not depend on where you run the command from.
+A project-local `.env` is gitignored here.
 
 `skylight logout` deletes the cached token.
 
@@ -119,7 +137,14 @@ uv run ruff check .
 ```
 
 Tests run entirely against a mocked transport.
-Nothing in the suite touches the network or a real Skylight account.
+Nothing in the suite touches the network or a real Skylight account, and the suite points every XDG path at a scratch directory so it cannot read your own config.
+
+When reinstalling from a local checkout, pass `--reinstall`.
+Without it `uv` reuses the cached wheel for an unchanged version number and your edits are silently ignored:
+
+```bash
+uv tool install --force --reinstall .
+```
 
 ## License
 

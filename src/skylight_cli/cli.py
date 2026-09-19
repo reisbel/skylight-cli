@@ -15,13 +15,28 @@ from typing import Any
 
 from . import __version__, auth
 from .client import SkylightClient
-from .config import Settings, TokenCache
+from .config import Settings, TokenCache, config_dir
 from .errors import SkylightAuthError, SkylightError
 
 TRUNCATED = 60
 
 
 # -- session ---------------------------------------------------------------
+
+
+def missing_credentials_help(variable: str) -> str:
+    """Explain how to supply credentials when there is no terminal to prompt on."""
+    return (
+        f"{variable} is not set, and there is no terminal here to prompt on "
+        "(this happens when skylight runs from a script, an agent or an editor).\n"
+        f"Put your credentials in {config_dir() / '.env'}:\n"
+        "    SKYLIGHT_EMAIL=you@example.com\n"
+        "    SKYLIGHT_PASSWORD=your-password\n"
+        "Either value may be an op:// reference instead, resolved through the "
+        "1Password CLI so the secret never touches disk:\n"
+        "    SKYLIGHT_PASSWORD=op://Personal/Skylight/password\n"
+        "Or run `skylight login` once in a real terminal to cache a token."
+    )
 
 
 def open_session(cache: TokenCache, settings: Settings, *, interactive: bool) -> SkylightClient:
@@ -51,14 +66,11 @@ def do_login(cache: TokenCache, settings: Settings, *, interactive: bool) -> Any
 
     if not email:
         if not interactive:
-            raise SkylightError("SKYLIGHT_EMAIL is not set. See .env.example.")
+            raise SkylightError(missing_credentials_help("SKYLIGHT_EMAIL"))
         email = input("Skylight email: ").strip()
     if not password:
         if not interactive:
-            raise SkylightError(
-                "SKYLIGHT_PASSWORD is not set and there is no terminal to prompt on. "
-                "Run `skylight login` once by hand to cache a token."
-            )
+            raise SkylightError(missing_credentials_help("SKYLIGHT_PASSWORD"))
         password = getpass.getpass(f"Password for {email}: ")
 
     credentials = auth.login(email, password)

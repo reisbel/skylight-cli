@@ -97,3 +97,17 @@ def test_cell_truncates_long_values() -> None:
     assert len(cli._cell("x" * 80)) == cli.TRUNCATED
     assert cli._cell(True) == "yes"
     assert cli._cell(None) == "-"
+
+
+def test_missing_credentials_help_is_actionable() -> None:
+    message = cli.missing_credentials_help("SKYLIGHT_PASSWORD")
+    assert "SKYLIGHT_PASSWORD is not set" in message
+    assert "skylight-cli/.env" in message
+    assert "op://" in message
+    assert "real terminal" in message
+
+
+def test_login_without_credentials_fails_cleanly(capsys, monkeypatch) -> None:
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    assert cli.main(["login"]) == 1
+    assert "op://" in capsys.readouterr().err
