@@ -11,6 +11,7 @@ import getpass
 import json
 import sys
 from collections.abc import Sequence
+from datetime import date
 from typing import Any
 
 from . import __version__, auth
@@ -149,12 +150,18 @@ def cmd_members(args: argparse.Namespace, client: SkylightClient) -> int:
 
 def cmd_chores_list(args: argparse.Namespace, client: SkylightClient) -> int:
     frame_id = client.resolve_frame_id(args.frame)
+    today = date.today().isoformat()
     emit(
-        client.chores(frame_id, date=args.date),
+        client.chores(
+            frame_id,
+            after=args.after or today,
+            before=args.before or args.after or today,
+            include_late=args.include_late,
+        ),
         [
             ("id", "id"),
             ("chore", "summary"),
-            ("who", "category_id"),
+            ("who", "category"),
             ("start", "start"),
             ("status", "status"),
             ("points", "reward_points"),
@@ -272,12 +279,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("frames", help="List households on this account").set_defaults(func=cmd_frames)
     sub.add_parser("members", help="List family members").set_defaults(func=cmd_members)
 
-    chores = sub.add_parser("chores", help="Work with chores")
-    chores.set_defaults(func=cmd_chores_list, date=None)
+    # Shared so that `skylight chores --after ...` and `skylight chores list
+    # --after ...` both work. Without a parent parser the options would only
+    # exist on the subcommand, and the bare form would read a date as a command.
+    chore_window = argparse.ArgumentParser(add_help=False)
+    chore_window.add_argument("--after", help="From this date (YYYY-MM-DD). Defaults to today")
+    chore_window.add_argument("--before", help="To this date (YYYY-MM-DD). Defaults to --after")
+    chore_window.add_argument(
+        "--include-late", action="store_true", help="Include overdue chores from earlier"
+    )
+
+    chores = sub.add_parser("chores", help="Work with chores", parents=[chore_window])
+    chores.set_defaults(func=cmd_chores_list)
     chores_sub = chores.add_subparsers(dest="chores_command")
 
-    show = chores_sub.add_parser("list", help="Show chores")
-    show.add_argument("--date", help="Only chores on this date (YYYY-MM-DD)")
+    show = chores_sub.add_parser("list", help="Show chores", parents=[chore_window])
     show.set_defaults(func=cmd_chores_list)
 
     add = chores_sub.add_parser("add", help="Create a chore")

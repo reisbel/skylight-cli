@@ -16,7 +16,19 @@ def parse(argv: list[str]):
 def test_bare_chores_defaults_to_listing() -> None:
     args = parse(["chores"])
     assert args.func is cli.cmd_chores_list
-    assert args.date is None
+    assert args.after is None
+    assert args.before is None
+    assert args.include_late is False
+
+
+def test_the_date_window_works_with_and_without_the_subcommand() -> None:
+    # The options live on a parent parser precisely so both spellings parse.
+    bare = parse(["chores", "--after", "2026-09-14", "--before", "2026-09-21"])
+    explicit = parse(["chores", "list", "--after", "2026-09-14", "--before", "2026-09-21"])
+    for args in (bare, explicit):
+        assert args.func is cli.cmd_chores_list
+        assert args.after == "2026-09-14"
+        assert args.before == "2026-09-21"
 
 
 def test_chores_add_collects_every_option() -> None:

@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from skylight_cli.auth import Credentials
-from skylight_cli.client import SkylightClient, flatten
+from skylight_cli.client import SkylightClient, flatten, index_included
 from skylight_cli.errors import (
     SkylightAPIError,
     SkylightAuthError,
@@ -46,6 +46,28 @@ def route(mapping: dict[tuple[str, str], object], recorder: list | None = None):
     return handler
 
 
+CHORE_PAYLOAD = {
+    "data": [
+        {
+            "id": "1073-2026-09-19-0600",
+            "type": "chore",
+            "attributes": {"summary": "Brush teeth", "start": "2026-09-19", "status": "pending"},
+            "relationships": {
+                "category": {"data": {"id": "11454457", "type": "category"}},
+                "completed_category": {"data": None},
+            },
+        }
+    ],
+    "included": [
+        {
+            "id": "11454457",
+            "type": "category",
+            "attributes": {"label": "Lucas", "color": "#83B9E9"},
+        }
+    ],
+}
+
+
 def test_flatten_folds_attributes_up() -> None:
     assert flatten({"id": "5", "type": "chore", "attributes": {"summary": "Dishes"}}) == {
         "id": "5",
@@ -54,6 +76,50 @@ def test_flatten_folds_attributes_up() -> None:
     }
     assert flatten({"id": "5"}) == {"id": "5"}
     assert flatten("nonsense") == {}
+
+
+def test_flatten_pulls_relationship_ids_up() -> None:
+    flat = flatten(CHORE_PAYLOAD["data"][0])
+    assert flat["category_id"] == "11454457"
+    # An empty to-one relationship contributes nothing at all.
+    assert "completed_category_id" not in flat
+    # With no included index there is no label to attach.
+    assert "category" not in flat
+
+
+def test_flatten_resolves_labels_from_included() -> None:
+    flat = flatten(CHORE_PAYLOAD["data"][0], index_included(CHORE_PAYLOAD))
+    assert flat["category"] == "Lucas"
+    assert flat["category_id"] == "11454457"
+
+
+def test_index_included_tolerates_a_response_without_it() -> None:
+    assert index_included({"data": []}) == {}
+    assert index_included("nonsense") == {}
+
+
+def test_chores_resolve_who_from_side_loaded_categories() -> None:
+    with build(route({("GET", "/api/frames/77/chores"): CHORE_PAYLOAD})) as client:
+        rows = client.chores("77", after="2026-09-19", before="2026-09-19")
+    assert rows[0]["summary"] == "Brush teeth"
+    assert rows[0]["category"] == "Lucas"
+
+
+def test_chores_send_the_date_window() -> None:
+    seen: list[httpx.Request] = []
+    with build(route({("GET", "/api/frames/77/chores"): CHORE_PAYLOAD}, seen)) as client:
+        client.chores("77", after="2026-09-14", before="2026-09-21", include_late=True)
+    params = seen[0].url.params
+    assert params["after"] == "2026-09-14"
+    assert params["before"] == "2026-09-21"
+    assert params["include_late"] == "true"
+
+
+def test_chores_omit_include_late_when_not_asked() -> None:
+    seen: list[httpx.Request] = []
+    with build(route({("GET", "/api/frames/77/chores"): CHORE_PAYLOAD}, seen)) as client:
+        client.chores("77", after="2026-09-19", before="2026-09-19")
+    assert "include_late" not in seen[0].url.params
 
 
 def test_authorization_header_is_sent() -> None:

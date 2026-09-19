@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "skylight-cli"
-version = "0.3.0"
+version = "0.4.0"
 description = "Unofficial CLI for Skylight Calendar chores and lists"
 readme = "README.md"
 license = "MIT"

@@ -25,14 +25,49 @@ from .errors import (
 )
 
 
-def flatten(record: Any) -> dict[str, Any]:
-    """Fold a JSON:API record into ``{"id": ..., **attributes}``."""
+def index_included(payload: Any) -> dict[tuple[str, str], dict[str, Any]]:
+    """Index a response's ``included`` side-loaded records by type and id."""
+    included = payload.get("included") if isinstance(payload, dict) else None
+    if not isinstance(included, list):
+        return {}
+    index: dict[tuple[str, str], dict[str, Any]] = {}
+    for record in included:
+        if isinstance(record, dict) and record.get("id") is not None:
+            index[(str(record.get("type")), str(record["id"]))] = record.get("attributes") or {}
+    return index
+
+
+def flatten(
+    record: Any, included: dict[tuple[str, str], dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Fold a JSON:API record into a flat dict.
+
+    Attributes come up to the top level, and each to-one relationship
+    contributes a ``<name>_id``. When the response side-loaded the related
+    record, its human label lands under ``<name>`` as well, which is what turns
+    an opaque category id into "Lucas".
+    """
     if not isinstance(record, dict):
         return {}
     attributes = record.get("attributes")
     if not isinstance(attributes, dict):
         return dict(record)
-    return {"id": record.get("id"), "type": record.get("type"), **attributes}
+
+    flat: dict[str, Any] = {"id": record.get("id"), "type": record.get("type"), **attributes}
+
+    relationships = record.get("relationships")
+    if isinstance(relationships, dict):
+        for name, relationship in relationships.items():
+            data = (relationship or {}).get("data")
+            if not isinstance(data, dict) or data.get("id") is None:
+                continue
+            flat[f"{name}_id"] = data["id"]
+            related = (included or {}).get((str(data.get("type")), str(data["id"])))
+            if related:
+                label = related.get("label") or related.get("name")
+                if label:
+                    flat[name] = label
+    return flat
 
 
 def _without_none(values: dict[str, Any]) -> dict[str, Any]:
@@ -113,7 +148,8 @@ class SkylightClient:
         data = payload.get("data") if isinstance(payload, dict) else payload
         if not isinstance(data, list):
             return []
-        return [flatten(record) for record in data]
+        included = index_included(payload)
+        return [flatten(record, included) for record in data]
 
     # -- frames and family members ----------------------------------------
 
@@ -153,13 +189,28 @@ class SkylightClient:
 
     # -- chores ------------------------------------------------------------
 
-    def chores(self, frame_id: str, **params: Any) -> list[dict[str, Any]]:
+    def chores(
+        self,
+        frame_id: str,
+        *,
+        after: str | None = None,
+        before: str | None = None,
+        include_late: bool | None = None,
+    ) -> list[dict[str, Any]]:
+        """Chores in a date range.
+
+        The endpoint rejects an unbounded query with a 422, so a range is
+        required rather than optional.
+        """
+        params = _without_none(
+            {
+                "after": after,
+                "before": before,
+                "include_late": "true" if include_late else None,
+            }
+        )
         return self._records(
-            self._request(
-                "GET",
-                f"{API_PREFIX}/frames/{frame_id}/chores",
-                params=_without_none(params) or None,
-            )
+            self._request("GET", f"{API_PREFIX}/frames/{frame_id}/chores", params=params or None)
         )
 
     def add_chore(
