@@ -104,6 +104,8 @@ def test_missing_credentials_help_is_actionable() -> None:
     assert "SKYLIGHT_PASSWORD is not set" in message
     assert "skylight-cli/.env" in message
     assert "op://" in message
+    assert "lp://" in message
+    assert "cmd://" in message
     assert "real terminal" in message
 
 

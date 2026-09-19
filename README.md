@@ -66,13 +66,26 @@ SKYLIGHT_EMAIL=you@example.com
 SKYLIGHT_PASSWORD=your-password
 ```
 
-Better, keep the password in 1Password and reference it.
-Any value may be an `op://` reference, resolved at run time through the 1Password CLI, so the secret is never written to disk or left in your shell history:
+Better, keep the password in a vault and reference it.
+Any value may be a secret reference, resolved at run time by shelling out to a password manager, so the secret is never written to disk or left in your shell history:
+
+| Reference | Resolved with |
+| --- | --- |
+| `op://Personal/Skylight/password` | `op read op://Personal/Skylight/password` |
+| `lp://Skylight Calendar` | `lpass show --password 'Skylight Calendar'` |
+| `cmd://security find-generic-password -s Skylight -w` | the command itself |
 
 ```ini
 SKYLIGHT_EMAIL=you@example.com
-SKYLIGHT_PASSWORD=op://Personal/Skylight/password
+SKYLIGHT_PASSWORD=lp://Skylight Calendar
 ```
+
+`cmd://` is the escape hatch for anything not listed, including the macOS Keychain, `pass` and Bitwarden.
+It is split with shell-like quoting but never handed to a shell, so there is no shell expansion to get wrong.
+A value matching no scheme is used as the literal password.
+
+Both `op` and `lpass` need an unlocked session of their own.
+`lpass login you@example.com` wants a terminal, so run it once by hand; the `lpass` agent keeps the session alive for later non-interactive calls.
 
 Config is read from `~/.config/skylight-cli/.env` first, then a `.env` in the working directory, then real environment variables, each overriding the last.
 The per-user file is the one to use for a globally installed `skylight`, since it does not depend on where you run the command from.

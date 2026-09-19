@@ -32,9 +32,11 @@ def missing_credentials_help(variable: str) -> str:
         f"Put your credentials in {config_dir() / '.env'}:\n"
         "    SKYLIGHT_EMAIL=you@example.com\n"
         "    SKYLIGHT_PASSWORD=your-password\n"
-        "Either value may be an op:// reference instead, resolved through the "
-        "1Password CLI so the secret never touches disk:\n"
-        "    SKYLIGHT_PASSWORD=op://Personal/Skylight/password\n"
+        "Either value may be a secret reference instead, resolved at run time by a "
+        "password manager so the secret never touches disk:\n"
+        "    SKYLIGHT_PASSWORD=op://Personal/Skylight/password    (1Password)\n"
+        "    SKYLIGHT_PASSWORD=lp://Skylight                      (LastPass)\n"
+        "    SKYLIGHT_PASSWORD=cmd://some-command --that prints-it\n"
         "Or run `skylight login` once in a real terminal to cache a token."
     )
 

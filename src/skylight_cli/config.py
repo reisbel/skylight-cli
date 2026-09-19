@@ -4,16 +4,31 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from .auth import Credentials
 from .errors import SkylightError
 
-#: Secret references of this form are resolved by shelling out to the 1Password CLI.
-OP_PREFIX = "op://"
+#: Secret references are resolved by shelling out to a password manager.
+#: Each scheme maps the part after ``://`` onto the argv that prints the secret.
+#: ``cmd://`` is the escape hatch for anything not listed: it runs the reference
+#: itself, split with shell-like quoting but never handed to a shell.
+SECRET_SCHEMES: dict[str, Callable[[str], list[str]]] = {
+    "op://": lambda ref: ["op", "read", ref],
+    "lp://": lambda ref: ["lpass", "show", "--password", ref.removeprefix("lp://")],
+    "cmd://": lambda ref: shlex.split(ref.removeprefix("cmd://")),
+}
+
+#: Told to the user when the helper program is missing, keyed by scheme.
+SECRET_TOOLS = {
+    "op://": "the 1Password CLI (`op`)",
+    "lp://": "the LastPass CLI (`lpass`)",
+    "cmd://": "the command given",
+}
 
 
 def config_dir() -> Path:
@@ -51,16 +66,25 @@ def load_dotenv(path: Path) -> dict[str, str]:
 
 
 def resolve_secret(value: str | None) -> str | None:
-    """Resolve an ``op://`` reference through the 1Password CLI, else pass it through.
+    """Resolve a secret reference through a password manager, else pass it through.
 
     This keeps the real secret out of the config file, the shell history and the
-    process list. Everything else is returned unchanged.
+    process list. A value matching no known scheme is returned unchanged, so a
+    literal password still works.
     """
-    if not value or not value.startswith(OP_PREFIX):
+    if not value:
         return value
+    scheme = next((s for s in SECRET_SCHEMES if value.startswith(s)), None)
+    if scheme is None:
+        return value
+
+    command = SECRET_SCHEMES[scheme](value)
+    if not command:
+        raise SkylightError(f"{value} does not name a command to run")
+    tool = SECRET_TOOLS[scheme]
     try:
         result = subprocess.run(
-            ["op", "read", value],
+            command,
             capture_output=True,
             text=True,
             timeout=60,
@@ -68,17 +92,20 @@ def resolve_secret(value: str | None) -> str | None:
         )
     except FileNotFoundError as exc:
         raise SkylightError(
-            f"{value} needs the 1Password CLI, but `op` was not found on PATH."
+            f"{value} needs {tool}, but `{command[0]}` was not found on PATH."
         ) from exc
     except subprocess.CalledProcessError as exc:
-        raise SkylightError(
-            f"Could not read {value} from 1Password: {exc.stderr.strip() or 'op failed'}"
-        ) from exc
+        detail = (exc.stderr or "").strip() or f"`{command[0]}` exited with {exc.returncode}"
+        raise SkylightError(f"Could not read {value}: {detail}") from exc
     except subprocess.TimeoutExpired as exc:
         raise SkylightError(
-            f"Timed out reading {value} from 1Password. If it is locked, unlock it first."
+            f"Timed out reading {value}. If the vault is locked, unlock it first."
         ) from exc
-    return result.stdout.strip()
+
+    secret = result.stdout.strip()
+    if not secret:
+        raise SkylightError(f"{value} resolved to an empty value")
+    return secret
 
 
 @dataclass

@@ -115,6 +115,55 @@ def test_resolve_secret_reports_a_locked_vault(monkeypatch) -> None:
         resolve_secret("op://Personal/Skylight/password")
 
 
+def test_resolve_secret_reads_from_lastpass(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="lastpass-secret\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert resolve_secret("lp://Skylight Calendar") == "lastpass-secret"
+    assert calls == [["lpass", "show", "--password", "Skylight Calendar"]]
+
+
+def test_resolve_secret_runs_an_arbitrary_command(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="from-keychain\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    reference = 'cmd://security find-generic-password -s "Skylight Calendar" -w'
+    assert resolve_secret(reference) == "from-keychain"
+    # shlex keeps the quoted service name as one argument, and no shell is involved.
+    assert calls == [["security", "find-generic-password", "-s", "Skylight Calendar", "-w"]]
+
+
+def test_resolve_secret_names_the_missing_lastpass_binary(monkeypatch) -> None:
+    def fake_run(command, **kwargs):
+        raise FileNotFoundError("lpass")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(SkylightError, match="LastPass CLI"):
+        resolve_secret("lp://Skylight")
+
+
+def test_resolve_secret_rejects_an_empty_result(monkeypatch) -> None:
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout="\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(SkylightError, match="empty value"):
+        resolve_secret("lp://Skylight")
+
+
+def test_resolve_secret_rejects_a_reference_with_no_command() -> None:
+    with pytest.raises(SkylightError, match="does not name a command"):
+        resolve_secret("cmd://   ")
+
+
 def test_token_cache_round_trips(tmp_path) -> None:
     cache = TokenCache(tmp_path / "token.json")
     assert cache.load() is None
