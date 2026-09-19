@@ -6,7 +6,12 @@ import httpx
 import pytest
 
 from skylight_cli.auth import Credentials
-from skylight_cli.client import SkylightClient, flatten, index_included
+from skylight_cli.client import (
+    SkylightClient,
+    flatten,
+    index_included,
+    split_chore_id,
+)
 from skylight_cli.errors import (
     SkylightAPIError,
     SkylightAuthError,
@@ -182,7 +187,7 @@ def test_add_chore_marks_recurring_when_given_weekdays() -> None:
         return httpx.Response(200, json={"data": {"id": "43", "attributes": {}}})
 
     with build(handler) as client:
-        client.add_chore("77", "Trash", recurrence_set=["monday", "thursday"])
+        client.add_chore("77", "Trash", category_id="1", recurrence_set=["monday", "thursday"])
 
     import json as _json
 
@@ -191,7 +196,26 @@ def test_add_chore_marks_recurring_when_given_weekdays() -> None:
     assert body["recurrence_set"] == ["monday", "thursday"]
 
 
-def test_complete_chore_targets_an_instance() -> None:
+def test_add_chore_requires_a_category() -> None:
+    # Skylight answers a chore with no category with a 422, so it is not optional.
+    with build(lambda request: httpx.Response(200, json={})) as client:
+        with pytest.raises(TypeError):
+            client.add_chore("77", "Trash")
+
+
+def test_split_chore_id_separates_a_recurring_instance() -> None:
+    assert split_chore_id("107378250-2026-09-19-0600") == ("107378250", "2026-09-19", "06:00")
+    assert split_chore_id("107378250-2026-09-19-1430") == ("107378250", "2026-09-19", "14:30")
+
+
+def test_split_chore_id_leaves_a_one_off_alone() -> None:
+    assert split_chore_id("107825814") == ("107825814", None, None)
+    assert split_chore_id(107825814) == ("107825814", None, None)
+    # Anything that does not match the instance shape is passed through whole.
+    assert split_chore_id("not-an-id") == ("not-an-id", None, None)
+
+
+def test_complete_chore_sends_only_status_for_a_one_off() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -199,13 +223,87 @@ def test_complete_chore_targets_an_instance() -> None:
         return httpx.Response(200, json={})
 
     with build(handler) as client:
-        client.complete_chore("77", "42", instance_date="2026-09-19")
+        client.complete_chore("77", "42")
 
     import json as _json
 
     assert seen[0].method == "PUT"
     assert seen[0].url.path == "/api/frames/77/chores/42/completions"
-    assert _json.loads(seen[0].content) == {"status": "complete", "instance_date": "2026-09-19"}
+    # The API rejects instance_date, instance_time and category_id on a one-off.
+    assert _json.loads(seen[0].content) == {"status": "complete"}
+
+
+def test_complete_chore_splits_a_recurring_instance_id() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={})
+
+    with build(handler) as client:
+        client.complete_chore("77", "107378250-2026-09-19-0600")
+
+    import json as _json
+
+    # The series id addresses the endpoint; the date and time go in the body.
+    assert seen[0].url.path == "/api/frames/77/chores/107378250/completions"
+    assert _json.loads(seen[0].content) == {
+        "status": "complete",
+        "instance_date": "2026-09-19",
+        "instance_time": "06:00",
+    }
+
+
+def test_complete_chore_can_reopen_one() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={})
+
+    with build(handler) as client:
+        client.complete_chore("77", "42", status="pending")
+
+    import json as _json
+
+    assert _json.loads(seen[0].content) == {"status": "pending"}
+
+
+def test_delete_chore_uses_the_series_id() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(204)
+
+    with build(handler) as client:
+        client.delete_chore("77", "107378250-2026-09-19-0600", apply_to="all")
+
+    assert seen[0].method == "DELETE"
+    assert seen[0].url.path == "/api/frames/77/chores/107378250"
+    assert seen[0].url.params["apply_to"] == "all"
+
+
+def test_validation_errors_are_surfaced_from_a_list() -> None:
+    body = {"errors": ["Category is required."]}
+    with build(lambda request: httpx.Response(422, json=body)) as client:
+        with pytest.raises(SkylightAPIError, match="Category is required."):
+            client.chores("77", after="2026-09-19", before="2026-09-19")
+
+
+def test_validation_errors_are_surfaced_from_a_field_map() -> None:
+    body = {"errors": {"instance_date": ["must be blank"], "status": ["is not included"]}}
+    with build(lambda request: httpx.Response(422, json=body)) as client:
+        with pytest.raises(SkylightAPIError) as caught:
+            client.chores("77", after="2026-09-19", before="2026-09-19")
+    assert "instance_date must be blank" in str(caught.value)
+    assert "status is not included" in str(caught.value)
+
+
+def test_a_body_without_errors_still_reports_the_status() -> None:
+    with build(lambda request: httpx.Response(422, text="<html>nope</html>")) as client:
+        with pytest.raises(SkylightAPIError, match="HTTP 422"):
+            client.chores("77", after="2026-09-19", before="2026-09-19")
 
 
 def test_resolve_list_id_by_name_or_id() -> None:

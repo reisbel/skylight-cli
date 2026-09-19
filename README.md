@@ -108,13 +108,21 @@ skylight lists done Groceries 5138
 skylight lists rm Groceries 5138
 
 # Chores
-skylight chores
-skylight chores --date 2026-09-20
+skylight chores                                   # today
+skylight chores --after 2026-09-20 --before 2026-09-27 --include-late
 skylight chores add "Take out the trash" --who Lucas --on 2026-09-20 --at 18:00 --points 5
 skylight chores add "Make the bed" --who Camila --repeat monday tuesday wednesday thursday friday
-skylight chores done 4471 --on 2026-09-20
-skylight chores rm 4471 --all
+skylight chores done 107825814                    # a one-off chore
+skylight chores done 107378250-2026-09-19-0600    # one occurrence of a repeating chore
+skylight chores done 107378250-2026-09-19-0600 --undo
+skylight chores rm 107825814 --all
 ```
+
+`--who` is required when adding a chore, because Skylight rejects one with no family member attached.
+
+Chore ids come in two shapes and you can paste either.
+A one-off chore has a plain id like `107825814`.
+A repeating chore lists each occurrence as `<series>-<date>-<time>`, such as `107378250-2026-09-19-0600`, and completing that marks just the one day.
 
 Every command prints an aligned table by default and raw JSON with `--json`, so it composes with `jq` and is easy to drive from a script or an agent.
 

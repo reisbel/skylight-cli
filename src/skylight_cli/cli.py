@@ -174,13 +174,12 @@ def cmd_chores_list(args: argparse.Namespace, client: SkylightClient) -> int:
 
 def cmd_chores_add(args: argparse.Namespace, client: SkylightClient) -> int:
     frame_id = client.resolve_frame_id(args.frame)
-    category_id = client.resolve_member_id(frame_id, args.who) if args.who else None
     created = client.add_chore(
         frame_id,
         args.summary,
+        category_id=client.resolve_member_id(frame_id, args.who),
         start=args.on,
         start_time=args.at,
-        category_id=category_id,
         reward_points=args.points,
         recurrence_set=args.repeat,
         recurring_until=args.until,
@@ -195,9 +194,9 @@ def cmd_chores_add(args: argparse.Namespace, client: SkylightClient) -> int:
 
 def cmd_chores_done(args: argparse.Namespace, client: SkylightClient) -> int:
     frame_id = client.resolve_frame_id(args.frame)
-    category_id = client.resolve_member_id(frame_id, args.who) if args.who else None
-    client.complete_chore(frame_id, args.chore_id, instance_date=args.on, category_id=category_id)
-    print(f"Marked chore {args.chore_id} complete.")
+    status = "pending" if args.undo else "complete"
+    client.complete_chore(frame_id, args.chore_id, status=status)
+    print(f"Marked chore {args.chore_id} {status}.")
     return 0
 
 
@@ -298,7 +297,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     add = chores_sub.add_parser("add", help="Create a chore")
     add.add_argument("summary", help="What the chore is")
-    add.add_argument("--who", help="Family member to assign it to, by name")
+    add.add_argument(
+        "--who", required=True, help="Family member to assign it to, by name. Skylight requires one"
+    )
     add.add_argument("--on", help="Start date (YYYY-MM-DD)")
     add.add_argument("--at", help="Start time (HH:MM)")
     add.add_argument("--points", type=int, help="Reward points")
@@ -313,9 +314,8 @@ def build_parser() -> argparse.ArgumentParser:
     add.set_defaults(func=cmd_chores_add)
 
     done = chores_sub.add_parser("done", help="Mark a chore complete")
-    done.add_argument("chore_id")
-    done.add_argument("--on", help="Which instance, for a repeating chore (YYYY-MM-DD)")
-    done.add_argument("--who", help="Family member completing it, by name")
+    done.add_argument("chore_id", help="Id from `skylight chores`, instance id included")
+    done.add_argument("--undo", action="store_true", help="Mark it pending again instead")
     done.set_defaults(func=cmd_chores_done)
 
     remove = chores_sub.add_parser("rm", help="Delete a chore")

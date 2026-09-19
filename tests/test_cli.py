@@ -59,6 +59,19 @@ def test_chores_add_collects_every_option() -> None:
     assert args.repeat == ["monday", "thursday"]
 
 
+def test_chores_add_refuses_to_run_without_an_assignee() -> None:
+    # Skylight rejects a chore with no category, so catch it before the request.
+    with pytest.raises(SystemExit):
+        parse(["chores", "add", "Take out trash"])
+
+
+def test_chores_done_can_undo() -> None:
+    args = parse(["chores", "done", "107378250-2026-09-19-0600", "--undo"])
+    assert args.func is cli.cmd_chores_done
+    assert args.chore_id == "107378250-2026-09-19-0600"
+    assert args.undo is True
+
+
 def test_lists_add_takes_several_items() -> None:
     args = parse(["lists", "add", "Groceries", "Milk", "Eggs"])
     assert args.func is cli.cmd_lists_add

@@ -11,6 +11,7 @@ and :func:`flatten` folds each record down to a plain dict with ``id`` included.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -23,6 +24,22 @@ from .errors import (
     SkylightError,
     SkylightNotFoundError,
 )
+
+#: Recurring chores list their occurrences as ``<series>-<YYYY-MM-DD>-<HHMM>``.
+INSTANCE_ID_RE = re.compile(r"^(?P<series>\d+)-(?P<date>\d{4}-\d{2}-\d{2})-(?P<time>\d{4})$")
+
+
+def split_chore_id(chore_id: str | int) -> tuple[str, str | None, str | None]:
+    """Split a chore id into its series, date and time.
+
+    A one-off chore has a plain numeric id and no instance, so the date and
+    time come back as ``None``.
+    """
+    match = INSTANCE_ID_RE.match(str(chore_id))
+    if not match:
+        return str(chore_id), None, None
+    time = match["time"]
+    return match["series"], match["date"], f"{time[:2]}:{time[2:]}"
 
 
 def index_included(payload: Any) -> dict[tuple[str, str], dict[str, Any]]:
@@ -124,22 +141,51 @@ class SkylightClient:
             return None
 
     @staticmethod
-    def _raise_for_status(response: httpx.Response, method: str, path: str) -> None:
+    def _error_detail(response: httpx.Response) -> str | None:
+        """Pull the human-readable part out of Skylight's error body.
+
+        Their validation errors are the most useful thing the API says, and
+        they arrive either as ``{"errors": ["Category is required."]}`` or as
+        ``{"errors": {"instance_date": ["must be blank"]}}``.
+        """
+        try:
+            payload = response.json()
+        except ValueError:
+            return None
+        errors = payload.get("errors") if isinstance(payload, dict) else None
+        if isinstance(errors, list):
+            return "; ".join(str(error) for error in errors) or None
+        if isinstance(errors, dict):
+            return (
+                "; ".join(
+                    f"{field} {', '.join(str(m) for m in messages)}"
+                    if isinstance(messages, list)
+                    else f"{field} {messages}"
+                    for field, messages in errors.items()
+                )
+                or None
+            )
+        return None
+
+    @classmethod
+    def _raise_for_status(cls, response: httpx.Response, method: str, path: str) -> None:
         if response.is_success:
             return
         status = response.status_code
+        detail = cls._error_detail(response)
+        suffix = f": {detail}" if detail else ""
         if status == 401:
             raise SkylightAuthError("Session expired or invalid. Run `skylight login` again.")
         if status == 403:
             raise SkylightAPIError(
                 f"{method} {path} was forbidden (HTTP 403). This usually means the "
-                "feature needs an active Skylight Plus subscription.",
+                f"feature needs an active Skylight Plus subscription{suffix}",
                 status_code=status,
             )
         if status == 404:
-            raise SkylightNotFoundError(f"{method} {path} not found (HTTP 404)")
+            raise SkylightNotFoundError(f"{method} {path} not found (HTTP 404){suffix}")
         raise SkylightAPIError(
-            f"{method} {path} failed with HTTP {status}",
+            f"{method} {path} failed with HTTP {status}{suffix}",
             status_code=status,
             body=response.text[:500] or None,
         )
@@ -218,9 +264,9 @@ class SkylightClient:
         frame_id: str,
         summary: str,
         *,
+        category_id: str,
         start: str | None = None,
         start_time: str | None = None,
-        category_id: str | None = None,
         reward_points: int | None = None,
         recurrence_set: list[str] | None = None,
         recurring_until: str | None = None,
@@ -242,34 +288,31 @@ class SkylightClient:
         payload = self._request("POST", f"{API_PREFIX}/frames/{frame_id}/chores", json=body)
         return flatten((payload or {}).get("data", payload))
 
-    def complete_chore(
-        self,
-        frame_id: str,
-        chore_id: str,
-        *,
-        instance_date: str | None = None,
-        category_id: str | None = None,
-        status: str = "complete",
-    ) -> Any:
-        """Mark a chore done.
+    def complete_chore(self, frame_id: str, chore_id: str, *, status: str = "complete") -> Any:
+        """Mark a chore complete, or pending again.
 
-        Recurring chores are series, so a completion targets one instance by
-        date rather than the chore itself.
+        A recurring chore is a series, and the ids it lists look like
+        ``<series>-<date>-<hhmm>``. The completions endpoint wants those three
+        parts split out, and rejects ``instance_date`` and ``instance_time``
+        for a one-off chore, so the id itself decides what gets sent.
+        ``category_id`` must always be blank here, whatever the chore.
         """
+        series, instance_date, instance_time = split_chore_id(chore_id)
         body = _without_none(
             {
                 "status": status,
                 "instance_date": instance_date,
-                "category_id": category_id,
+                "instance_time": instance_time,
             }
         )
         return self._request(
-            "PUT", f"{API_PREFIX}/frames/{frame_id}/chores/{chore_id}/completions", json=body
+            "PUT", f"{API_PREFIX}/frames/{frame_id}/chores/{series}/completions", json=body
         )
 
     def delete_chore(self, frame_id: str, chore_id: str, *, apply_to: str | None = None) -> None:
+        series, _, _ = split_chore_id(chore_id)
         params = {"apply_to": apply_to} if apply_to else None
-        self._request("DELETE", f"{API_PREFIX}/frames/{frame_id}/chores/{chore_id}", params=params)
+        self._request("DELETE", f"{API_PREFIX}/frames/{frame_id}/chores/{series}", params=params)
 
     # -- lists -------------------------------------------------------------
 
